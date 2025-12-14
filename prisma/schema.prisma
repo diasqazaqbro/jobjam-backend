@@ -1,0 +1,204 @@
+// JobJam - Job Board Platform Schema
+
+generator client {
+  provider      = "prisma-client-js"
+  binaryTargets = ["native", "linux-arm64-openssl-3.0.x", "linux-musl-arm64-openssl-1.1.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role {
+  USER      // Соискатель
+  EMPLOYER  // Работодатель
+  ADMIN     // Администратор
+}
+
+enum VacancyStatus {
+  DRAFT
+  ACTIVE
+  CLOSED
+  ARCHIVED
+}
+
+enum ResumeStatus {
+  DRAFT
+  ACTIVE
+  HIDDEN
+}
+
+model User {
+  id            String        @id @default(uuid())
+  email         String        @unique
+  password      String?        // hashed (optional, only for admin)
+  role          Role          @default(USER)
+  
+  // HeadHunter OAuth fields
+  hhId          String?       @unique // HeadHunter user ID
+  hhAccessToken String?       // HH access token
+  hhRefreshToken String?      // HH refresh token
+  hhExpiresAt   DateTime?     // Token expiration time
+  
+  // Common fields
+  firstName     String
+  lastName      String
+  phone         String?
+  avatarUrl     String?
+  
+  // Employer specific (если роль EMPLOYER)
+  companyName   String?
+  companyDescription String?
+  companyWebsite String?
+  companyLogo   String?
+  
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  
+  // Relations
+  resumes       Resume[]      // Если USER
+  vacancies     Vacancy[]     // Если EMPLOYER
+  applications  Application[] // Если USER - отклики на вакансии
+  profile       UserProfile?  // Профиль для AI генерации резюме
+  
+  @@map("users")
+}
+
+model Resume {
+  id            String        @id @default(uuid())
+  userId        String
+  
+  // Basic info
+  title         String        // "Full-Stack разработчик"
+  firstName     String
+  lastName      String
+  email         String
+  phone         String
+  birthDate     DateTime?
+  city          String?
+  
+  // Professional info
+  position      String        // Желаемая должность
+  salary        Int?          // Желаемая зарплата
+  experience    String?       // Опыт работы (JSON or text)
+  education     String?       // Образование (JSON or text)
+  skills        String[]      // Навыки
+  about         String?       // О себе
+  
+  // Attachments
+  photoUrl      String?
+  fileUrl       String?       // PDF резюме
+  
+  // HeadHunter integration
+  hhResumeId    String?       @unique // HeadHunter resume ID
+  hhUrl         String?       // Link to HH resume
+  hhRawJson     Json?         // Raw HH API response
+  
+  status        ResumeStatus  @default(DRAFT)
+  
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  
+  // Relations
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  applications  Application[]
+  
+  @@map("resumes")
+}
+
+model Vacancy {
+  id            String        @id @default(uuid())
+  employerId   String?       // User with role EMPLOYER (optional for HH vacancies)
+  
+  // Source: JobJam or HeadHunter
+  source        String        @default("jobjam") // "jobjam" | "hh"
+  hhVacancyId   String?       @unique // HeadHunter vacancy ID (if from HH)
+  
+  // Basic info
+  title         String
+  company       String        // Название компании
+  description   String        // Описание вакансии
+  requirements  String?       // Требования
+  responsibilities String?    // Обязанности
+  conditions    String?       // Условия
+  
+  // Compensation
+  salaryFrom    Int?
+  salaryTo      Int?
+  salaryCurrency String?      @default("KZT")
+  
+  // Location
+  city          String
+  address       String?
+  
+  // Details
+  employmentType String?      // "Полная занятость", "Частичная" и т.д.
+  experienceLevel String?     // "INTERN", "JUNIOR", "MIDDLE", "SENIOR", "LEAD"
+  experienceYears Int?        // Требуемый опыт в годах  
+  skills        String[]      // Требуемые навыки
+  
+  // Contact info
+  contactEmail  String?
+  contactPhone  String?
+  
+  // HH specific
+  hhUrl         String?       // Link to HH vacancy
+  hhPublishedAt DateTime?     // Publication date on HH
+  hhRawJson     Json?         // Raw HH API response
+  
+  status        VacancyStatus @default(DRAFT)
+  viewsCount    Int           @default(0)
+  
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt 
+  
+  // Relations
+  employer      User?         @relation(fields: [employerId], references: [id], onDelete: Cascade)
+  applications  Application[]
+  
+  @@map("vacancies")
+}
+
+model Application {
+  id            String        @id @default(uuid())
+  vacancyId     String
+  userId        String        // USER который откликнулся
+  resumeId      String?       // Nullable для AI queue (создается позже)
+  
+  coverLetter   String?       // Сопроводительное письмо
+  status        String        @default("QUEUED") // QUEUED, PROCESSING, COMPLETED, FAILED, pending, viewed, rejected, accepted
+  jobId         String?       @unique // BullMQ job ID
+  failedReason  String?       // Reason for failure
+  
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  
+  // Relations
+  vacancy       Vacancy       @relation(fields: [vacancyId], references: [id], onDelete: Cascade)
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resume        Resume?       @relation(fields: [resumeId], references: [id], onDelete: Cascade)
+  
+  @@unique([vacancyId, userId])
+  @@map("applications")
+}
+
+// User Profile for AI Resume Generation
+model UserProfile {
+  id            String        @id @default(uuid())
+  userId        String        @unique // One profile per user
+  
+  // Work Experience (JSON array)
+  experience    Json?         // Array of { company, position, description, start, end }
+  
+  // Education (JSON object)
+  education     Json?         // { level, name, organization, year }
+  
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+  
+  // Relations
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  @@map("user_profiles")
+}

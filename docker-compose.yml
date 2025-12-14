@@ -1,0 +1,37 @@
+version: "3.9"
+
+services:
+  backend:
+    build: .
+    container_name: nest-backend
+    restart: always
+    env_file:
+      - .env
+    ports:
+      - "3001:3001"
+    depends_on:
+      - postgres
+      - redis
+
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    restart: always
+    environment:
+      POSTGRES_USER: jobjam
+      POSTGRES_PASSWORD: jobjam_password
+      POSTGRES_DB: jobjam_db
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+
+  redis:
+    image: redis:7
+    container_name: redis
+    restart: always
+    ports:
+      - "6379:6379"
+
+volumes:
+  pg_data:
